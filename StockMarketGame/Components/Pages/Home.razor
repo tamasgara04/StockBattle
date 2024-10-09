@@ -1,0 +1,188 @@
+﻿@page "/"
+@using StockMarketGame.Classes
+@using StockMarketGame.Services
+@inject StockScraperService StockScraper
+@inject WebSocketService _webSocketService
+
+<MudPaper Class="pa-4">
+    <h3>Stock Market Competition Game</h3>
+    <MudButton OnClick="StartConnection">Start Connection</MudButton>
+    <MudGrid>
+        <MudItem xs="12" sm="6">
+            @if (availablEquities != null)
+            {
+                <MudSelect T="Equity" Label="Select First Stock" @bind-Value="selectedStock1">
+                    @foreach (var stock in availablEquities)
+                    {
+                        <MudSelectItem Value="@stock">@stock.DisplayName</MudSelectItem>
+                    }
+                </MudSelect>
+            }
+        </MudItem>
+
+        <MudItem xs="12" sm="6">
+            <MudSelect T="Equity" Label="Select Second Stock" @bind-Value="selectedStock2">
+                @if (availablEquities != null)
+                {
+                    @foreach (var stock in availablEquities)
+                    {
+                        <MudSelectItem Value="@stock">@stock.DisplayName</MudSelectItem>
+                    }
+                }
+            </MudSelect>
+        </MudItem>
+
+        <MudItem xs="12">
+            <MudTextField Label="Predicted Difference (%)" @bind-Value="preferredDifference" />
+            <MudButton Variant="Variant.Filled" OnClick="LoadData">Compare Stocks</MudButton>
+            <MudButton OnClick="StateHasChanged">Refresh</MudButton>
+        </MudItem>
+    </MudGrid>
+
+@if (historicalPrices1 != null && historicalPrices2 != null)
+    {
+        <MudStack Class="mt-4 p-4">
+            <MudPaper Class="mt-4 p-4">
+                <h4>Stock Performance</h4>
+                <MudGrid>
+                    <MudItem xs="12" sm="6" class="d-flex align-items-center">
+                        <MudText Typo="Typo.h6" Class="mr-2">
+                            @selectedStock1.DisplayName:
+                        </MudText>
+                        <MudText Typo="Typo.h6" Color=@(percentChange1 >= 0 ? Color.Success: Color.Error)>
+                            @percentChange1% @lastPrice1$ 
+                        </MudText>
+                    </MudItem>
+                    <MudItem xs="12" sm="6" class="d-flex align-items-center">
+                        <MudText Typo="Typo.h6" Class="mr-2">
+                            @selectedStock2.DisplayName:
+                        </MudText>
+                        <MudText Typo="Typo.h6" Color=@(percentChange2 >= 0 ? Color.Success: Color.Error)>
+                            @percentChange2% @lastPrice2$
+                        </MudText>
+                    </MudItem>
+                </MudGrid>
+            </MudPaper>
+
+            <MudItem sm="12">
+                <MudChart ChartType="ChartType.Line" ChartSeries="@Series" XAxisLabels="@XAxisLabels" Width="100%" Height="400px" ChartOptions="@Options"/>
+            </MudItem>
+        </MudStack>
+    }
+
+    <MudPaper Class="pa-4">
+        <h4>Your Current Bet:</h4>
+        <p>Calculated Difference: @currentDifference%</p>
+        <p>Off by: @offByDifference%</p>
+
+        <MudProgressLinear Value="@((offByDifference / 100) * 100)" Color="@((offByDifference <= 0) ? Color.Success : Color.Error)" />
+    </MudPaper>
+</MudPaper>
+<style>
+    .mud-charts-xaxis text {
+        font-size: 8px; /* adjust font size as needed */
+        max-width: 100px; /* set maximum width for tick labels */
+        overflow: hidden; /* truncate labels if they exceed the maximum width */
+        white-space: nowrap; /* prevent label wrapping */
+    }
+</style>
+@code {
+    private Equity selectedStock1;
+    private Equity selectedStock2;
+    private double lastPrice1 = 0;
+    private double lastPrice2 = 0;
+    private bool isLoading = false;
+    private string preferredDifference; // Store user's guess
+    private double currentDifference; // Calculate and display current difference
+    private double offByDifference; // Calculate how much the user is off by
+    private List<Equity> availablEquities;
+    private string[] XAxisLabels = {};
+    private ChartOptions Options = new ChartOptions();
+    private List<ChartSeries> Series = new();
+    
+    private List<StockBasicData> historicalPrices1;
+    private List<StockBasicData> historicalPrices2;
+    
+    private double percentChange1; // Store percentage change for stock 1
+    private double percentChange2; // Store percentage change for stock 2
+    
+    protected override async Task OnInitializedAsync()
+    {
+        var temp = await StockScraper.GetEquitiesAsync("https://www.investing.com/equities");
+        availablEquities = temp.OrderBy(x => x.SafeName).ToList();
+        selectedStock1 = availablEquities.First(x => x.DisplayName.Equals("IBM"));
+        selectedStock2 = availablEquities.First(x => x.DisplayName.Equals("Apple"));
+        await LoadData();
+
+        base.OnInitialized();
+    }
+
+    private async Task StartConnection()
+    {
+        await _webSocketService.ConnectAsync();
+    }
+    
+    private async Task LoadData()
+    {
+        if (string.IsNullOrWhiteSpace(selectedStock1.SafeName) || string.IsNullOrWhiteSpace(selectedStock2.SafeName))
+        {
+            return;
+        }
+
+        isLoading = true;
+
+        // Simulate getting URLs based on the selected stocks
+        string url1 = $"https://www.investing.com/equities/{selectedStock1.SafeName.ToLower()}-historical-data";
+        string url2 = $"https://www.investing.com/equities/{selectedStock2.SafeName.ToLower()}-historical-data";
+
+        // Fetch stock prices using the scraper service
+        historicalPrices1 = await StockScraper.GetHistoricalStockPricesAsync(url1);
+        historicalPrices2 = await StockScraper.GetHistoricalStockPricesAsync(url2);
+
+        // Prepare data for the chart
+        XAxisLabels = historicalPrices1.Select(p => p.Date.ToString("d MMM")).ToArray();
+
+        Series.Clear();
+        Series.Add(new() { Data = historicalPrices1.Select(p => (double)p.Price).ToArray(), Name = selectedStock1.DisplayName });
+        Series.Add(new() { Data = historicalPrices2.Select(p => (double)p.Price).ToArray(), Name = selectedStock2.DisplayName });
+
+        // Calculate current difference
+        currentDifference = await CalculateCurrentDifference();
+
+        // Calculate how much the user is off by their bet
+        if (double.TryParse(preferredDifference, out var preferredDiff))
+        {
+            offByDifference = Math.Abs(currentDifference - preferredDiff);
+        }
+        else
+        {
+            offByDifference = 0; // Reset if parsing fails
+        }
+        isLoading = false;
+    }
+    
+    private async Task<double> CalculateCurrentDifference()
+    {
+        // Ensure there are historical prices available
+        if (historicalPrices1.Count == 0 || historicalPrices2.Count == 0)
+        {
+            return 0;
+        }
+
+        // Get the first and last prices for the first stock
+        var firstPrice1 = historicalPrices1.First().Price;
+
+        // Get the first and last prices for the second stock
+        var firstPrice2 = historicalPrices2.First().Price;
+
+        // Calculate percentage change for both stocks
+        percentChange1 = ((lastPrice1 - firstPrice1) / firstPrice1) * 100; // Percentage change for stock 1
+        percentChange2 = ((lastPrice2 - firstPrice2) / firstPrice2) * 100; // Percentage change for stock 2
+
+        // Calculate the difference between the percentage changes
+        double actualDifference = percentChange1 - percentChange2;
+
+        // Return the actual difference
+        return actualDifference; // Change this to return the actual difference instead of absolute difference from user preference
+    }
+}
