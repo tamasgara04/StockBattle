@@ -40,6 +40,7 @@ public class WebSocketService : IDisposable
     private async Task SubscribeToStockDataAsync()
     {
         var subscribeMessage = "[\"{\\\"_event\\\":\\\"bulk-subscribe\\\",\\\"tzID\\\":8,\\\"message\\\":\\\"isOpenExch-2:%%isOpenExch-1:%%pid-8849:%%isOpenExch-1004:%%pid-8833:%%pid-8862:%%pid-8830:%%pid-8836:%%pid-8831:%%pid-8916:%%pid-6408:%%pid-6369:%%pid-13994:%%pid-6435:%%pid-13063:%%pid-26490:%%pid-243:%%pid-1175152:%%isOpenExch-152:%%pid-1175153:%%pid-169:%%pid-166:%%pid-14958:%%pid-44336:%%isOpenExch-97:%%pid-8827:%%pid-6497:%%pid-941155:%%pid-23705:%%pid-23706:%%pid-23703:%%pid-23698:%%pid-8880:%%isOpenExch-118:%%pid-8895:%%pid-1141794:%%pid-20:%%pid-172:%%isOpenExch-4:%%pid-27:%%isOpenExch-3:%%pid-167:%%isOpenExch-9:%%pid-178:%%isOpenExch-20:%%pid-8832:%%pid-1:%%isOpenExch-1002:%%pid-2:%%pid-3:%%pid-5:%%pid-7:%%pid-9:%%pid-10:%%isOpenExch-NaN:%%pid-17195:%%pid-1166239:%%pid-1177781:%%pid-252:%%pid-16678:%%pid-8274:%%pid-1096032:%%pid-251:%%pidExt-6408:%%cmt-1-5-6408:%%pid-8318:%%pid-271:\\\"}\"]";
+
         // Send subscription message to receive stock data
         var messageBytes = Encoding.UTF8.GetBytes(subscribeMessage);
         await _clientWebSocket.SendAsync(new ArraySegment<byte>(messageBytes), WebSocketMessageType.Text, true, _cts.Token);
@@ -55,11 +56,9 @@ public class WebSocketService : IDisposable
         {
             var result = await _clientWebSocket.ReceiveAsync(new ArraySegment<byte>(buffer), _cts.Token);
             var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
-
-            Console.WriteLine($"Message received: {message}");
-
+            
             // Check if it's not a heartbeat message
-            if (!message.Contains("heartbeat"))
+            if (!message.Contains("heartbeat") && !message.Contains("pid"))
             {
                 Console.WriteLine($"Non-heartbeat message: {message}");
             }
@@ -73,8 +72,32 @@ public class WebSocketService : IDisposable
             // Further parse messages if they contain stock data
             if (message.Contains("pid"))
             {
-                Console.WriteLine($"Stock Data Message: {message}");
+                var jsonMessage = message.Substring(2, message.Length - 4); // Remove leading "a[" and trailing "]"
+                var stockDataString = jsonMessage.Split("::")[1]; // Extract the actual stock data part
 
+                // Unescape the string properly
+                stockDataString = stockDataString.Replace("\\", "")
+                    .Trim(); // Trim any excess whitespace
+                
+                if (stockDataString.EndsWith("\"}"))
+                {
+                    stockDataString = stockDataString.Substring(0, stockDataString.Length - 2);
+                }
+                try
+                {
+                    // Deserialize the JSON string into StockData
+                    var stockData = JsonSerializer.Deserialize<StockData>(stockDataString);
+
+                    if (stockData != null)
+                    {
+                        Console.WriteLine($"Received pid {stockData.pid} data: {stockData.last} at {stockData.timestamp}");
+                        // Update your UI or perform further actions with stockData
+                    }
+                }
+                catch (JsonException ex)
+                {
+                    Console.WriteLine($"JSON deserialization error: {ex.Message}");
+                }
             }
         }
     }
